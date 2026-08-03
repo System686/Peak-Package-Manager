@@ -1,17 +1,9 @@
 #!/usr/bin/env bash
 
-REPO_URL="https://githubusercontent.com"
+REPO_URL="https://raw.githubusercontent.com/System686/K2-linux/k2-user-repository"
 CACHE_DIR="/var/cache/peak"
 BUILD_DIR="/tmp/peak-build"
 DB_DIR="/var/lib/peak/installed"
-
-CONFIG_FILE="/etc/peak.conf"
-if [ -f "$CONFIG_FILE" ]; then
-    source "$CONFIG_FILE"
-fi
-
-export LANG=C
-export LC_ALL=C
 
 check_root() {
     if [ "$EUID" -ne 0 ]; then
@@ -24,26 +16,10 @@ show_help() {
     echo "Usage: peak [OPTION] [PACKAGE|PATH]"
     echo ""
     echo "Options:"
-    echo "  -S, --sync <pkg>    Download from GitHub, build, and install a package"
+    echo "  -S, --sync <pkg>    Download from GitHub, build and install a package"
     echo "  -B, --build <dir>   Build and install a local PEAKBUILD"
     echo "  -R, --remove <pkg>  Remove an installed package"
     echo "  -h, --help          Show this help message"
-}
-
-download_from_github() {
-    local pkg="$1"
-    local target_dir="${CACHE_DIR}/${pkg}"
-
-    echo "[peak] Connecting to repository for '$pkg'..."
-    mkdir -p "$target_dir"
-
-    curl -s -f "${REPO_URL}/${pkg}/PEAKBUILD" -o "${target_dir}/PEAKBUILD"
-
-    if [ $? -ne 0 ]; then
-        echo "[peak] Error: Package '$pkg' not found on remote repository!"
-        rm -rf "$target_dir"
-        exit 1
-    fi
 }
 
 build_and_install() {
@@ -55,11 +31,6 @@ build_and_install() {
     fi
 
     source "${target_dir}/PEAKBUILD"
-
-    if [ -z "$pkgname" ] || [ -z "$pkgver" ]; then
-        echo "[peak] Error: Invalid PEAKBUILD. Missing 'pkgname' or 'pkgver'."
-        exit 1
-    fi
 
     echo "=========================================="
     echo "  Building:    $pkgname v$pkgver"
@@ -108,14 +79,10 @@ build_and_install() {
     echo "[peak] Installing files into the system..."
     
     mkdir -p "$DB_DIR"
-    
-    find "${pkgdir}" -mindepth 1 | sed "s|^${pkgdir}||" > "${DB_DIR}/${pkgname}.files"
+    find "${pkgdir}" -mindepth 1 -type f -o -type l | sed "s|^${pkgdir}||" > "${DB_DIR}/${pkgname}.files"
 
-    if [ -d "${pkgdir}" ] && [ "$(ls -A "${pkgdir}")" ]; then
-        cp -av "${pkgdir}"/* /
-    else
-        echo "[peak] Warning: Packaging directory is empty. Nothing to copy."
-    fi
+    # 2. Copia dei file nel sistema reale
+    cp -av "${pkgdir}"/* /
 
     command -v ldconfig &>/dev/null && ldconfig
 
@@ -136,26 +103,35 @@ remove_package() {
     fi
 
     echo "[peak] Removing package '$pkg'..."
-    
-    local file_list=()
-    while IFS= read -r line; do
-        file_list+=("$line")
-    fi < "$manifest"
 
-    for ((i=${#file_list[@]}-1; i>=0; i--)); do
-        local target="${file_list[$i]}"
-        if [ -f "$target" ] || [ -L "$target" ]; then
-            rm -f "$target"
-        elif [ -d "$target" ]; then
-            rmdir "$target" 2>/dev/null
+    while IFS= read -r file; do
+        if [ -f "$file" ] || [ -L "$file" ]; then
+            rm -f "$file"
         fi
-    done
+    done < "$manifest"
 
     rm -f "$manifest"
 
     command -v ldconfig &>/dev/null && ldconfig
 
     echo "[peak] Package '$pkg' removed successfully!"
+}
+
+download_from_github() {
+    local pkg="$1"
+    local target_dir="${CACHE_DIR}/${pkg}"
+
+    echo "[peak] Connecting to repository for '$pkg'..."
+    mkdir -p "$target_dir"
+
+    
+    curl -s -f "${REPO_URL}/${pkg}/PEAKBUILD" -o "${target_dir}/PEAKBUILD"
+
+    if [ $? -ne 0 ]; then
+        echo "[peak] Error: Package '$pkg' not found on remote repository!"
+        rm -rf "$target_dir"
+        exit 1
+    fi
 }
 
 case "$1" in
